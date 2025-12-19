@@ -3,6 +3,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 import numpy as np
 from dateutil import parser
+import re
 
 
 @dataclass
@@ -465,15 +466,24 @@ def prepare_plot_ready_data(df):
     - Drops rows where value is not numeric
     - Drops rows where date is null or non-parsable
     - Converts year/month-year values to datetime
-    - Keeps only rows where metric contains 'Occ', 'ADR', or 'RevPAR'
+    - If date is null and metric is a 4-digit year, treat metric as date
+    - Keeps only rows where metric contains 'Occ', 'ADR', 'RevPAR', or is a 4-digit year (for YoY Change)
     Returns a DataFrame with columns: date (datetime), metric (str), value (float)
     """
     if df.empty:
         return pd.DataFrame(columns=['date', 'metric', 'value'])
 
     df = df.copy()
-    # Only keep relevant metrics
-    df = df[df['metric'].astype(str).str.contains(r'(Occ|ADR|RevPAR)', case=False, na=False)]
+    # Remove metadata rows
+    metadata_patterns = r'(Market|Job Number|Currency|Created|nan|Table of Contents|Response|Terms|Staff|Classic|Raw Data|Segmentation)'
+    df = df[~df['metric'].astype(str).str.contains(metadata_patterns, case=False, na=False)]
+
+    # Only keep relevant metrics or year rows
+    metric_mask = df['metric'].astype(str).str.contains(r'(Occ|ADR|RevPAR)', case=False, na=False)
+    year_mask = df['metric'].astype(str).str.match(r'^(20[1-3][0-9]|19[7-9][0-9])$')
+    keep_mask = metric_mask | year_mask
+    df = df[keep_mask]
+
     # Try to parse date
     def parse_date(val):
         if pd.isnull(val):
@@ -487,6 +497,13 @@ def prepare_plot_ready_data(df):
         except Exception:
             return None
     df['date'] = df['date'].apply(parse_date)
+
+    # If date is null and metric is a 4-digit year, use metric as date
+    mask_metric_year = df['date'].isnull() & df['metric'].astype(str).str.match(r'^(20[1-3][0-9]|19[7-9][0-9])$')
+    df.loc[mask_metric_year, 'date'] = df.loc[mask_metric_year, 'metric'].apply(lambda x: pd.to_datetime(f"{x}-01-01"))
+    # For these, set metric to 'YoY Change' (or keep original if desired)
+    df.loc[mask_metric_year, 'metric'] = 'YoY Change'
+
     # Only keep rows with valid dates
     df = df[df['date'].notnull()]
     # Only keep rows where value is numeric
