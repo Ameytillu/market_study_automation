@@ -17,9 +17,9 @@ def run_app():
 
     for uploaded in uploaded_files:
         st.header(f"File: {uploaded.name}")
-        # read as bytes and pass file-like to analyzer
-        content = uploaded.read()
-        bio = io.BytesIO(content)
+        # Store file bytes for multiple reads
+        file_bytes = uploaded.getvalue()
+        bio = io.BytesIO(file_bytes)
 
         # File inspection
         inspection_result = inspect_uploaded_file(bio, uploaded.name)
@@ -30,6 +30,8 @@ def run_app():
             st.error(f"File could not be read: {inspection_result['error_message']}")
             continue
 
+        # Reset BytesIO for analysis
+        bio.seek(0)
         result = analyze_excel(bio, source_file=uploaded.name)
 
         st.subheader("Detected Sheets and Normalized Data")
