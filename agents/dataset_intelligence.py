@@ -178,26 +178,19 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     for sheet in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
+            sheet_info = SheetInfo(
+                sheet_name=sheet,
+                analysis_type='direct',  # Direct analysis without normalization
+                aggregation='Unknown',
+                rows=df.shape[0],
+                cols=df.shape[1],
+                normalized=[],  # Skip normalization
+                source_file=source_file,
+            )
+            sheets_out.append(asdict(sheet_info))
         except Exception:
             # if reading failed, skip but include metadata
             sheets_out.append(SheetInfo(sheet_name=sheet, analysis_type='unknown', aggregation='Unknown', rows=0, cols=0, normalized=[], source_file=source_file).__dict__)
             continue
-
-        norm = _normalize_to_canonical(df, sheet, source_file)
-        # determine top-level metadata
-        date_col = _detect_date_column(df)
-        aggregation = _detect_aggregation_from_columns(df.columns.tolist()) or (_detect_aggregation_from_dates(norm['date']) if not norm.empty and 'date' in norm else 'Unknown')
-        analysis_type = _classify_analysis_type(df, date_col)
-
-        sheet_info = SheetInfo(
-            sheet_name=sheet,
-            analysis_type=analysis_type,
-            aggregation=aggregation,
-            rows=df.shape[0],
-            cols=df.shape[1],
-            normalized=norm.fillna('').to_dict(orient='records'),
-            source_file=source_file,
-        )
-        sheets_out.append(asdict(sheet_info))
 
     return {'file': source_file, 'sheets': sheets_out}
