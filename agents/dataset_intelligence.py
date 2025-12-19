@@ -2,6 +2,7 @@ import pandas as pd
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 import numpy as np
+from dateutil import parser
 
 
 @dataclass
@@ -456,3 +457,43 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
             continue
 
     return {'file': source_file, 'sheets': sheets_out}
+
+
+def prepare_plot_ready_data(df):
+    """
+    Filters and cleans the DataFrame for plotting time-series metrics.
+    - Drops rows where value is not numeric
+    - Drops rows where date is null or non-parsable
+    - Converts year/month-year values to datetime
+    - Keeps only rows where metric contains 'Occ', 'ADR', or 'RevPAR'
+    Returns a DataFrame with columns: date (datetime), metric (str), value (float)
+    """
+    if df.empty:
+        return pd.DataFrame(columns=['date', 'metric', 'value'])
+
+    df = df.copy()
+    # Only keep relevant metrics
+    df = df[df['metric'].astype(str).str.contains(r'(Occ|ADR|RevPAR)', case=False, na=False)]
+    # Try to parse date
+    def parse_date(val):
+        if pd.isnull(val):
+            return None
+        try:
+            # If it's a year (e.g., 2017)
+            if str(val).strip().isdigit() and len(str(val).strip()) == 4:
+                return pd.to_datetime(f"{val}-01-01")
+            # Try parsing month-year (e.g., Jan 18)
+            return parser.parse(str(val), fuzzy=True, default=pd.Timestamp('1900-01-01'))
+        except Exception:
+            return None
+    df['date'] = df['date'].apply(parse_date)
+    # Only keep rows with valid dates
+    df = df[df['date'].notnull()]
+    # Only keep rows where value is numeric
+    df['value'] = pd.to_numeric(df['value'], errors='coerce')
+    df = df[df['value'].notnull()]
+    # Ensure correct dtypes
+    df = df[['date', 'metric', 'value']]
+    df['metric'] = df['metric'].astype(str)
+    df['value'] = df['value'].astype(float)
+    return df.reset_index(drop=True)

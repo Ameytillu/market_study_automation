@@ -1,7 +1,7 @@
 import streamlit as st
 import io
 import pandas as pd
-from agents.dataset_intelligence import analyze_excel, inspect_uploaded_file
+from agents.dataset_intelligence import analyze_excel, inspect_uploaded_file, prepare_plot_ready_data
 from analytics import metrics
 from visuals import charts
 
@@ -38,13 +38,22 @@ def run_app():
         for sheet in result.get('sheets', []):
             st.markdown(f"**Sheet:** {sheet.get('sheet_name')} — Type: {sheet.get('analysis_type')} — Aggregation: {sheet.get('aggregation')}")
             norm = pd.DataFrame(sheet.get('normalized', []))
-            if norm.empty:
-                st.write("No canonical data could be extracted from this sheet.")
-                continue
+            st.write("Raw normalized data:")
+            st.dataframe(norm)
 
-            # Debugging output for normalized data
-            st.write("Normalized Data Preview:")
-            st.dataframe(norm.head())
+            # Prepare plot-ready data
+            plot_df = prepare_plot_ready_data(norm)
+            st.write(f"Plot-ready row count: {len(plot_df)}")
+            if not plot_df.empty:
+                st.write("Plot-ready data preview:")
+                st.dataframe(plot_df.head())
+                try:
+                    fig = charts.plot_line_trend(plot_df, date_col='date', value_col='value', title=f"{uploaded.name} - {sheet.get('sheet_name')}")
+                    st.pyplot(fig)
+                except Exception as e:
+                    st.write('Could not plot trend:', str(e))
+            else:
+                st.error("No plottable time-series data found in this sheet")
 
             # show a trend chart for trend-like sheets
             if sheet.get('analysis_type') == 'trend':
