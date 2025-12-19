@@ -162,6 +162,58 @@ def _normalize_to_canonical(df: pd.DataFrame, sheet_name: str, source_file: Opti
     return pd.DataFrame(columns=['date', 'metric', 'value', 'segment', 'aggregation', 'analysis_type', 'source_file'])
 
 
+def _detect_report_style_sheet(df: pd.DataFrame) -> bool:
+    """Detect if a sheet uses a report-style layout (matrix format).
+
+    Args:
+        df: DataFrame to analyze.
+
+    Returns:
+        True if the sheet is report-style, False otherwise.
+    """
+    # Check if the first column is mostly text
+    first_col_text_ratio = df.iloc[:, 0].apply(lambda x: isinstance(x, str)).mean()
+    if first_col_text_ratio < 0.5:
+        return False
+
+    # Check if column headers contain years or months
+    parsed_col_dates = [pd.to_datetime(c, errors='coerce') for c in df.columns]
+    if sum([1 for p in parsed_col_dates if not pd.isna(p)]) >= 2:
+        return True
+
+    return False
+
+
+def _reshape_report_style_sheet(df: pd.DataFrame, sheet_name: str, source_file: Optional[str]) -> pd.DataFrame:
+    """Reshape a report-style sheet from wide matrix format into long format.
+
+    Args:
+        df: DataFrame to reshape.
+        sheet_name: Name of the sheet.
+        source_file: Name of the source file.
+
+    Returns:
+        Reshaped DataFrame with columns: date, metric, value.
+    """
+    df = df.copy()
+    # Drop fully-empty rows/columns
+    df = df.dropna(how='all')
+    df = df.dropna(axis=1, how='all')
+
+    # Assume the first column contains metrics and the rest are dates
+    metrics = df.iloc[:, 0].astype(str)
+    date_columns = df.columns[1:]
+
+    melted = df.melt(id_vars=[df.columns[0]], value_vars=date_columns, var_name='date', value_name='value')
+    melted.rename(columns={df.columns[0]: 'metric'}, inplace=True)
+    melted['date'] = pd.to_datetime(melted['date'], errors='coerce')
+    melted['metric'] = melted['metric'].astype(str)
+    melted['source_file'] = source_file
+    melted['sheet_name'] = sheet_name
+
+    return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
+
+
 def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     """Analyze an uploaded Excel file and return structured sheet information.
 
@@ -178,32 +230,51 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     for sheet in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
-            norm = _normalize_to_canonical(df, sheet, source_file)
-            # determine top-level metadata
-            date_col = _detect_date_column(df)
-            aggregation = _detect_aggregation_from_columns(df.columns.tolist()) or (
-                _detect_aggregation_from_dates(norm['date'])
-                if not norm.empty and 'date' in norm
-                else 'Unknown'
-            )
-            analysis_type = _classify_analysis_type(df, date_col)
+            if _detect_report_style_sheet(df):
+                norm = _reshape_report_style_sheet(df, sheet, source_file)
+                sheet_info = SheetInfo(
+                    sheet_name=sheet,
+                    analysis_type='report-style',
+                    aggregation='Unknown',
+                    rows=df.shape[0],
+                    cols=df.shape[1],
+                    normalized=norm.fillna('').to_dict(orient='records'),
+                    source_file=source_file,
+                )
+                sheets_out.append(asdict(sheet_info))
+            else:
+                # Skip if no numeric values or time dimension
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if numeric_cols.empty:
+                    sheets_out.append(
+                        SheetInfo(
+                            sheet_name=sheet,
+                            analysis_type='skipped',
+                            aggregation='Unknown',
+                            rows=df.shape[0],
+                            cols=df.shape[1],
+                            normalized=[],
+                            source_file=source_file,
+                        ).__dict__
+                    )
+                    continue
 
-            sheet_info = SheetInfo(
-                sheet_name=sheet,
-                analysis_type=analysis_type,
-                aggregation=aggregation,
-                rows=df.shape[0],
-                cols=df.shape[1],
-                normalized=norm.fillna('').to_dict(orient='records'),
-                source_file=source_file,
-            )
-            sheets_out.append(asdict(sheet_info))
-        except Exception:
-            # if reading failed, skip but include metadata
+                sheet_info = SheetInfo(
+                    sheet_name=sheet,
+                    analysis_type='unknown',
+                    aggregation='Unknown',
+                    rows=df.shape[0],
+                    cols=df.shape[1],
+                    normalized=[],
+                    source_file=source_file,
+                )
+                sheets_out.append(asdict(sheet_info))
+        except Exception as e:
+            # Include diagnostic message for skipped sheets
             sheets_out.append(
                 SheetInfo(
                     sheet_name=sheet,
-                    analysis_type='unknown',
+                    analysis_type='error',
                     aggregation='Unknown',
                     rows=0,
                     cols=0,
