@@ -271,6 +271,41 @@ def _reshape_matrix_style_sheet(df: pd.DataFrame, sheet_name: str, source_file: 
     return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
 
 
+def extract_matrix_fallback(df: pd.DataFrame, sheet_name: str, source_file: Optional[str]) -> Optional[pd.DataFrame]:
+    """Fallback extractor for matrix-style CoStar sheets.
+
+    Args:
+        df: DataFrame to analyze.
+        sheet_name: Name of the sheet.
+        source_file: Name of the source file.
+
+    Returns:
+        Reshaped DataFrame with columns: date, metric, value, or None if no numeric matrix exists.
+    """
+    df = df.copy()
+    # Drop fully empty rows and columns
+    df = df.dropna(how='all')
+    df = df.dropna(axis=1, how='all')
+
+    # Find the first row with numeric values
+    numeric_row_index = df.applymap(lambda x: isinstance(x, (int, float))).any(axis=1).idxmax()
+    if numeric_row_index == 0 and not df.iloc[0].apply(lambda x: isinstance(x, (int, float))).any():
+        return None  # No numeric matrix found
+
+    # Assume column 1 contains metric labels and columns 2+ contain time (dates)
+    metrics = df.iloc[numeric_row_index:, 0].astype(str)
+    date_columns = df.columns[1:]
+
+    melted = df.iloc[numeric_row_index:].melt(id_vars=[df.columns[0]], value_vars=date_columns, var_name='date', value_name='value')
+    melted.rename(columns={df.columns[0]: 'metric'}, inplace=True)
+    melted['date'] = pd.to_datetime(melted['date'], errors='coerce')
+    melted['metric'] = melted['metric'].astype(str)
+    melted['source_file'] = source_file
+    melted['sheet_name'] = sheet_name
+
+    return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
+
+
 def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     """Analyze an uploaded Excel file and return structured sheet information.
 
@@ -287,8 +322,17 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     for sheet in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
+            norm = None
+
+            # Attempt normal extraction
             if _detect_matrix_style_sheet(df):
                 norm = _reshape_matrix_style_sheet(df, sheet, source_file)
+
+            # Fallback extraction if normal fails
+            if norm is None or norm.empty:
+                norm = extract_matrix_fallback(df, sheet, source_file)
+
+            if norm is not None and not norm.empty:
                 sheet_info = SheetInfo(
                     sheet_name=sheet,
                     analysis_type='matrix-style',
@@ -299,18 +343,7 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
                     source_file=source_file,
                 )
                 sheets_out.append(asdict(sheet_info))
-            elif _detect_report_style_sheet(df):
-                norm = _reshape_report_style_sheet(df, sheet, source_file)
-                sheet_info = SheetInfo(
-                    sheet_name=sheet,
-                    analysis_type='report-style',
-                    aggregation='Unknown',
-                    rows=df.shape[0],
-                    cols=df.shape[1],
-                    normalized=norm.fillna('').to_dict(orient='records'),
-                    source_file=source_file,
-                )
-                sheets_out.append(asdict(sheet_info))
+                print(f"Sheet '{sheet}' processed successfully with {len(norm)} rows.")
             else:
                 # Skip if no numeric values or time dimension
                 numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -326,6 +359,7 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
                             source_file=source_file,
                         ).__dict__
                     )
+                    print(f"Sheet '{sheet}' skipped: No numeric matrix found.")
                     continue
 
                 sheet_info = SheetInfo(
@@ -338,6 +372,7 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
                     source_file=source_file,
                 )
                 sheets_out.append(asdict(sheet_info))
+                print(f"Sheet '{sheet}' marked as unknown.")
         except Exception as e:
             # Include diagnostic message for skipped sheets
             sheets_out.append(
@@ -351,6 +386,7 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
                     source_file=source_file,
                 ).__dict__
             )
+            print(f"Sheet '{sheet}' encountered an error: {str(e)}")
             continue
 
     return {'file': source_file, 'sheets': sheets_out}
