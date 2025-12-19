@@ -39,7 +39,10 @@ def run_app():
             if norm.empty:
                 st.write("No canonical data could be extracted from this sheet.")
                 continue
-            st.dataframe(norm)
+
+            # Debugging output for normalized data
+            st.write("Normalized Data Preview:")
+            st.dataframe(norm.head())
 
             # show a trend chart for trend-like sheets
             if sheet.get('analysis_type') == 'trend':
