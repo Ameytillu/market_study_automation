@@ -306,12 +306,12 @@ def extract_matrix_fallback(df: pd.DataFrame, sheet_name: str, source_file: Opti
     return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
 
 
-def inspect_uploaded_file(file_path, file_name):
+def inspect_uploaded_file(file_like, file_name):
     """
     Inspects the uploaded file to determine its type, readability, and basic structure.
 
     Args:
-        file_path (file-like): File-like object containing the uploaded file.
+        file_like (file-like): File-like object containing the uploaded file.
         file_name (str): Name of the uploaded file.
 
     Returns:
@@ -335,14 +335,14 @@ def inspect_uploaded_file(file_path, file_name):
         if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
             result["file_type"] = "Excel"
             # Attempt to read Excel file
-            excel_file = pd.ExcelFile(file_path)
+            excel_file = pd.ExcelFile(file_like)
             result["number_of_sheets"] = len(excel_file.sheet_names)
             result["sheet_names"] = excel_file.sheet_names
             result["readable"] = True
         elif file_name.endswith('.csv'):
             result["file_type"] = "CSV"
             # Attempt to read CSV file
-            df = pd.read_csv(file_path, nrows=5)  # Read a small sample
+            df = pd.read_csv(file_like, nrows=5)  # Read a small sample
             result["number_of_sheets"] = 1
             result["sheet_names"] = ["Sheet1"]
             result["readable"] = True
