@@ -306,6 +306,66 @@ def extract_matrix_fallback(df: pd.DataFrame, sheet_name: str, source_file: Opti
     return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
 
 
+def inspect_uploaded_file(file_path):
+    """
+    Inspects the uploaded file to determine its type, readability, and basic structure.
+
+    Args:
+        file_path (str): Path to the uploaded file.
+
+    Returns:
+        dict: A dictionary containing file inspection details:
+            - file_type (str): The detected file type (e.g., .xlsx, .xls, .csv).
+            - number_of_sheets (int): Number of sheets (for Excel files).
+            - sheet_names (list): Names of the sheets (for Excel files).
+            - readable (bool): Whether the file is readable.
+            - error_message (str): Error message if the file is not readable.
+    """
+    result = {
+        "file_type": None,
+        "number_of_sheets": 0,
+        "sheet_names": [],
+        "readable": False,
+        "error_message": None
+    }
+
+    try:
+        # Detect file type
+        if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
+            result["file_type"] = "Excel"
+            # Attempt to read Excel file
+            excel_file = pd.ExcelFile(file_path)
+            result["number_of_sheets"] = len(excel_file.sheet_names)
+            result["sheet_names"] = excel_file.sheet_names
+            result["readable"] = True
+        elif file_path.endswith('.csv'):
+            result["file_type"] = "CSV"
+            # Attempt to read CSV file
+            df = pd.read_csv(file_path, nrows=5)  # Read a small sample
+            result["number_of_sheets"] = 1
+            result["sheet_names"] = ["Sheet1"]
+            result["readable"] = True
+        else:
+            result["error_message"] = "Unsupported file type. Only .xlsx, .xls, and .csv are supported."
+    except Exception as e:
+        result["error_message"] = str(e)
+
+    return result
+
+
+def _is_sheet_analytical(df: pd.DataFrame) -> bool:
+    """
+    Check if a sheet is analytical based on its structure.
+
+    Args:
+        df (pd.DataFrame): The DataFrame representing the sheet.
+
+    Returns:
+        bool: True if the sheet has at least 2 rows and 2 columns, False otherwise.
+    """
+    return df.shape[0] >= 2 and df.shape[1] >= 2
+
+
 def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     """Analyze an uploaded Excel file and return structured sheet information.
 
@@ -323,6 +383,11 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
             norm = None
+
+            # Skip non-analytical sheets
+            if not _is_sheet_analytical(df):
+                print(f"Skipping sheet '{sheet}' due to insufficient data (rows: {df.shape[0]}, cols: {df.shape[1]}).")
+                continue
 
             # Attempt normal extraction
             if _detect_matrix_style_sheet(df):

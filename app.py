@@ -1,7 +1,7 @@
 import streamlit as st
 import io
 import pandas as pd
-from agents.dataset_intelligence import analyze_excel
+from agents.dataset_intelligence import analyze_excel, inspect_uploaded_file
 from analytics import metrics
 from visuals import charts
 
@@ -9,10 +9,10 @@ from visuals import charts
 def run_app():
     st.title("AI Market Study Agent (Base Version)")
 
-    uploaded_files = st.file_uploader("Upload one or more CoStar Excel File(s)", accept_multiple_files=True, type=['xls', 'xlsx'])
+    uploaded_files = st.file_uploader("Upload one or more CoStar Excel File(s)", accept_multiple_files=True, type=['xls', 'xlsx', 'csv'])
 
     if not uploaded_files:
-        st.info("Upload one or more Excel files to begin analysis.")
+        st.info("Upload one or more Excel/CSV files to begin analysis.")
         return
 
     for uploaded in uploaded_files:
@@ -20,6 +20,16 @@ def run_app():
         # read as bytes and pass file-like to analyzer
         content = uploaded.read()
         bio = io.BytesIO(content)
+
+        # File inspection
+        inspection_result = inspect_uploaded_file(bio)
+        st.subheader("File Inspection Results")
+        st.json(inspection_result)
+
+        if not inspection_result['readable']:
+            st.error(f"File could not be read: {inspection_result['error_message']}")
+            continue
+
         result = analyze_excel(bio, source_file=uploaded.name)
 
         st.subheader("Detected Sheets and Normalized Data")
