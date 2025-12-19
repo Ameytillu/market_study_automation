@@ -22,7 +22,7 @@ def run_app():
         bio = io.BytesIO(content)
 
         # File inspection
-        inspection_result = inspect_uploaded_file(bio)
+        inspection_result = inspect_uploaded_file(bio, uploaded.name)
         st.subheader("File Inspection Results")
         st.json(inspection_result)
 
