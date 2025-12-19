@@ -214,6 +214,63 @@ def _reshape_report_style_sheet(df: pd.DataFrame, sheet_name: str, source_file: 
     return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
 
 
+def _detect_matrix_style_sheet(df: pd.DataFrame) -> bool:
+    """Detect if a sheet uses a matrix-style layout typical of CoStar reports.
+
+    Args:
+        df: DataFrame to analyze.
+
+    Returns:
+        True if the sheet is matrix-style, False otherwise.
+    """
+    # Check if the first column is mostly text
+    first_col_text_ratio = df.iloc[:, 0].apply(lambda x: isinstance(x, str)).mean()
+    if first_col_text_ratio < 0.5:
+        return False
+
+    # Check if remaining columns are mostly numeric
+    numeric_cols_ratio = df.iloc[:, 1:].applymap(lambda x: isinstance(x, (int, float))).mean().mean()
+    if numeric_cols_ratio < 0.5:
+        return False
+
+    # Check if column headers contain years, months, or time indicators
+    parsed_col_dates = [pd.to_datetime(c, errors='coerce') for c in df.columns[1:]]
+    if sum([1 for p in parsed_col_dates if not pd.isna(p)]) >= 2:
+        return True
+
+    return False
+
+
+def _reshape_matrix_style_sheet(df: pd.DataFrame, sheet_name: str, source_file: Optional[str]) -> pd.DataFrame:
+    """Reshape a matrix-style sheet into long format typical of CoStar reports.
+
+    Args:
+        df: DataFrame to reshape.
+        sheet_name: Name of the sheet.
+        source_file: Name of the source file.
+
+    Returns:
+        Reshaped DataFrame with columns: date, metric, value.
+    """
+    df = df.copy()
+    # Drop fully-empty rows/columns
+    df = df.dropna(how='all')
+    df = df.dropna(axis=1, how='all')
+
+    # Assume the first column contains metrics and the rest are dates
+    metrics = df.iloc[:, 0].astype(str)
+    date_columns = df.columns[1:]
+
+    melted = df.melt(id_vars=[df.columns[0]], value_vars=date_columns, var_name='date', value_name='value')
+    melted.rename(columns={df.columns[0]: 'metric'}, inplace=True)
+    melted['date'] = pd.to_datetime(melted['date'], errors='coerce')
+    melted['metric'] = melted['metric'].astype(str)
+    melted['source_file'] = source_file
+    melted['sheet_name'] = sheet_name
+
+    return melted[['date', 'metric', 'value', 'source_file', 'sheet_name']]
+
+
 def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     """Analyze an uploaded Excel file and return structured sheet information.
 
@@ -230,7 +287,19 @@ def analyze_excel(file, source_file: Optional[str] = None) -> Dict[str, Any]:
     for sheet in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
-            if _detect_report_style_sheet(df):
+            if _detect_matrix_style_sheet(df):
+                norm = _reshape_matrix_style_sheet(df, sheet, source_file)
+                sheet_info = SheetInfo(
+                    sheet_name=sheet,
+                    analysis_type='matrix-style',
+                    aggregation='Unknown',
+                    rows=df.shape[0],
+                    cols=df.shape[1],
+                    normalized=norm.fillna('').to_dict(orient='records'),
+                    source_file=source_file,
+                )
+                sheets_out.append(asdict(sheet_info))
+            elif _detect_report_style_sheet(df):
                 norm = _reshape_report_style_sheet(df, sheet, source_file)
                 sheet_info = SheetInfo(
                     sheet_name=sheet,
